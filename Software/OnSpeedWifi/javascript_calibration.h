@@ -6,6 +6,9 @@ const char jsCalibration[] PROGMEM = R"=====(
  var OSFastMultiplier=1.35;
  var OSSlowMultiplier=1.25;
  var StallWarnMargin=5; // knots
+ var aoaSmoothing=.75; // .9999 full smoothing, 0 = no smooting
+ var cpSmoothing=.75; 
+ var iasSmoothing=.75;
  var LDmaxIAS=100; // will be calculated later based on flap position
  var AOA=0;
  var IASsmoothed=0;
@@ -37,6 +40,7 @@ const char jsCalibration[] PROGMEM = R"=====(
  flightData.PitchRate=[];
  flightData.smoothedIAS=[];
  flightData.smoothedCP=[];
+ flightData.smoothedDerivedAOA=[];
  flightData.Pitch=[];
  flightData.Flightpath=[];
  flightData.DecelRate=[];
@@ -118,10 +122,11 @@ if ((in_max - in_min) + out_min ==0) return 0;
    OnSpeed.flightPath=OnSpeedArray[17];
    OnSpeed.PitchRate= OnSpeedArray[18];
    OnSpeed.DecelRate= OnSpeedArray[19];
-   OnSpeed.CRC= OnSpeedArray[20];
+   OnSpeed.calSourceID= OnSpeedArray[20];
+   OnSpeed.CRC= OnSpeedArray[21];
+   OnSpeed.Timestamp = new Date().getTime();
    
-
-   var crc_string=OnSpeed.AOA+','+OnSpeed.Pitch+','+OnSpeed.Roll+','+OnSpeed.IAS+','+OnSpeed.PAlt+','+OnSpeed.verticalGLoad+','+OnSpeed.lateralGLoad+','+OnSpeed.alphaVA+','+OnSpeed.LDmax+','+OnSpeed.OnspeedFast+','+OnSpeed.OnspeedSlow+','+OnSpeed.OnspeedWarn+','+OnSpeed.flapsPos+','+OnSpeed.coeffP+','+OnSpeed.dataMark+','+OnSpeed.kalmanVSI+','+OnSpeed.flightPath+','+OnSpeed.PitchRate+','+OnSpeed.DecelRate;
+   var crc_string=OnSpeed.AOA+','+OnSpeed.Pitch+','+OnSpeed.Roll+','+OnSpeed.IAS+','+OnSpeed.PAlt+','+OnSpeed.verticalGLoad+','+OnSpeed.lateralGLoad+','+OnSpeed.alphaVA+','+OnSpeed.LDmax+','+OnSpeed.OnspeedFast+','+OnSpeed.OnspeedSlow+','+OnSpeed.OnspeedWarn+','+OnSpeed.flapsPos+','+OnSpeed.coeffP+','+OnSpeed.dataMark+','+OnSpeed.kalmanVSI+','+OnSpeed.flightPath+','+OnSpeed.PitchRate+','+OnSpeed.DecelRate+','+OnSpeed.calSourceID;
    var crc_calc=0;
    for (i=0;i<crc_string.length;i++)
        {
@@ -155,6 +160,7 @@ if ((in_max - in_min) + out_min ==0) return 0;
     decelRate=parseFloat(OnSpeed.DecelRate);
     flapsPos=OnSpeed.flapsPos;
     flapIndex=0;
+    
     for (i=0; i<flapDegrees.Count; i++)
          {
          if (flapDegrees[i]==flapsPos)
@@ -177,6 +183,27 @@ if ((in_max - in_min) + out_min ==0) return 0;
     document.getElementById("currentIAS").innerHTML = IASsmoothed;
     document.getElementById("currentDecel").innerHTML=smoothDecelRate.toFixed(1);
     prevIAS=IAS;
+        // 0= IMU, 1=VN-300, 2=AFS/SkyView, 3=Dynon D10, 4=G5, 5=G3X, 6=MGL
+    switch(parseInt(OnSpeed.calSourceID)) {
+    case 0:
+    calSource="Internal IMU";
+    break;
+    case 1: calSource="VectorNav VN-200/300";
+      break;
+    case 2: calSource="SkyView/Advanced";
+      break;
+    case 3: calSource="Dynon D10/D100";
+      break;
+    case 4: calSource="Garmin G5";
+      break;
+    case 5: calSource="Garmin G3X";
+      break;
+    case 6: calSource="MGL iEFIS";
+      break;      
+    default:
+      calSource='N/A';
+    }
+    writeToCalibrationSource(calSource); 
 
     if (dataRecording)
         {
@@ -188,9 +215,10 @@ if ((in_max - in_min) + out_min ==0) return 0;
         flightData.Pitch.push(PitchAngle);
         flightData.Flightpath.push(flightPath);
         flightData.DecelRate.push(decelRate);
+        flightData.Timestamp.push(OnSpeed.Timestamp);
         
-        // Current trigger is 5 deg/sec in either direction AND a negative pitch angle.
-        if (Math.abs((pitchRate)) > 5 && PitchAngle<0) recordData(false);
+        // Current trigger is 5 deg/sec in either direction
+        if (Math.abs((pitchRate)) > 5) recordData(false);
         }
 
 
@@ -215,6 +243,12 @@ function writeToStatus(message)
    status.innerHTML = message;
 }
 
+function writeToCalibrationSource(calSource)
+  {
+    var status = document.getElementById("calibrationsource");
+    status.innerHTML = calSource;
+  }   
+
 function recordData(on)
 {
 dataRecording=on;
@@ -233,7 +267,13 @@ if (on)
          flightData.DerivedAOA=[];
          flightData.CP=[];
          flightData.PitchRate=[];
-         flightData.DecelRate=[];         
+         flightData.smoothedIAS=[];
+         flightData.smoothedCP=[];
+         flightData.smoothedDerivedAOA=[];  
+         flightData.Pitch=[];
+         flightData.Flightpath=[];
+         flightData.DecelRate=[];
+         flightData.Timestamp=[];         
         }
         else
             {
@@ -244,17 +284,20 @@ if (on)
             flapsPosCalibrated=flapsPos;
             flightData.smoothedIAS[0]=flightData.IAS[0];
             flightData.smoothedCP[0]=flightData.CP[0];
+            flightData.smoothedDerivedAOA[0]=flightData.DerivedAOA[0];
             var stallCP=0;
             stallIAS=100;
             var stallIndex=0;
             for (i=1;i<flightData.IAS.length;i++)
                 {
-                flightData.smoothedIAS[i]=flightData.IAS[i]*.98+flightData.smoothedIAS[i-1]*.02;
-                flightData.smoothedCP[i]=flightData.CP[i]*.90+flightData.smoothedCP[i-1]*.10;
-                if (flightData.smoothedCP[i]>stallCP)
+                flightData.smoothedIAS[i]=flightData.IAS[i]*(1-iasSmoothing)+flightData.smoothedIAS[i-1]*iasSmoothing;
+                flightData.smoothedCP[i]=flightData.CP[i]*(1-cpSmoothing)+flightData.smoothedCP[i-1]*cpSmoothing;
+                flightData.smoothedDerivedAOA[i]=flightData.DerivedAOA[i]*(1-aoaSmoothing)+flightData.smoothedDerivedAOA[i-1]*aoaSmoothing;
+                if (flightData.CP[i]>stallCP)
                     {
-                    stallCP=flightData.smoothedCP[i];
-                    stallIAS=flightData.smoothedIAS[i];
+                    // determine stall IAS and CP based on instantaneous values
+                    stallCP=flightData.CP[i];
+                    stallIAS=flightData.IAS[i];
                     stallIndex=i;
                     }
                 }
@@ -269,8 +312,8 @@ if (on)
             var dataIAS=[]; // IAS linear regression to verify that IAS is decreasing
             for (i=0;i<=stallIndex;i++)
                 {
-                dataCPtoAOA.push([flightData.smoothedCP[i],flightData.DerivedAOA[i]]);
-                dataIAStoAOA.push([flightData.IAS[i],flightData.DerivedAOA[i]]);
+                dataCPtoAOA.push([flightData.smoothedCP[i],flightData.smoothedDerivedAOA[i]]);
+                dataIAStoAOA.push([flightData.IAS[i],flightData.smoothedDerivedAOA[i]]);
                 dataIAS.push([i,flightData.IAS[i]]);
                 }
             const resultIAS = regression.polynomial(dataIAS, { order: 1, precision:2 });   
@@ -323,7 +366,7 @@ if (on)
                               {
                               dataPoint=new Object();
                               dataPoint.x=flightData.smoothedCP[i];
-                              dataPoint.y=flightData.DerivedAOA[i];
+                              dataPoint.y=flightData.smoothedDerivedAOA[i];
                               chartData.series[0].data.push(dataPoint);
                               dataPoint=new Object();
                               dataPoint.x=flightData.smoothedCP[i];
@@ -438,10 +481,10 @@ fileContent+=";CPtoAOACurve: "+CPtoAOAcurve+"\n";
 fileContent+=";CPtoAOAr2="+CPtoAOAr2+"\n";
 fileContent+=";\n";
 fileContent+=";Data:\n";
-fileContent+= "IAS,CP,DerivedAOA,Pitch,FlightPath,DecelRate\n";
+fileContent+= "Timestamp,IAS,CP,smoothedCP,DerivedAOA,smoothedDerivedAOA,Pitch,FlightPath,DecelRate\n";
 for (i=0;i<=flightData.IAS.length-1 ;i++)
                 {
-                fileContent+=flightData.IAS[i]+","+flightData.CP[i]+","+flightData.DerivedAOA[i]+","+flightData.Pitch[i]+","+flightData.Flightpath[i]+","+flightData.DecelRate[i]+"\n";
+                fileContent+=flightData.Timestamp[i]+","+flightData.IAS[i]+","+flightData.CP[i]+","+flightData.smoothedCP[i]+","+flightData.DerivedAOA[i]+","+flightData.smoothedDerivedAOA[i]+","+flightData.Pitch[i]+","+flightData.Flightpath[i]+","+flightData.DecelRate[i]+"\n";
                 }
 var bb = new Blob([fileContent ], { type: 'application/csv' });
 var a = document.createElement('a');
@@ -452,6 +495,9 @@ a.click();
 
 function saveCalibration()
 {
+const userAnswer = confirm("Confirm saving this calibration to system settings?");
+if (!userAnswer) return;
+  
 params="flapsPos="+flapsPosCalibrated+"&curve0="+resultCPtoAOA.equation[0]+"&curve1="+resultCPtoAOA.equation[1]+"&curve2="+resultCPtoAOA.equation[2]+"&LDmaxSetpoint="+LDmaxSetpoint+"&OSFastSetpoint="+OSFastSetpoint+"&OSSlowSetpoint="+OSSlowSetpoint+"&StallWarnSetpoint="+StallWarnSetpoint+"&ManeuveringSetpoint="+ManeuveringSetpoint+"&StallSetpoint="+StallSetpoint;
 var xhr = new XMLHttpRequest();
 xhr.open("POST", "/calwiz?step=save", true);
@@ -463,6 +509,31 @@ xhr.onreadystatechange = function() {//Call a function when the state changes.
     }
 }
 xhr.send(params);
+}
+
+function saveScreenshot()
+{
+  const width = document.documentElement.scrollWidth;
+  const height = document.documentElement.scrollHeight;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  var context = canvas.getContext('2d');
+
+    
+domvas.toImage(document.getElementById("content"), function() {
+      context.drawImage(this, 0, 0);
+      const link = document.createElement("a");
+      const imageURL = canvas.toDataURL("image/png"); 
+      link.href = imageURL;
+      const timestamp = new Date().toISOString();
+      link.download = 'calibration-flap'+flapsPos+'_'+calDate.toISOString().substring(0, 10)+'-'+calDate.getHours()+'_'+calDate.getMinutes()+'.png';
+
+      link.click();
+    });
+
 }
 
 </script>

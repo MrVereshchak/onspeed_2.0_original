@@ -44,7 +44,6 @@ I2CwriteByte(_i2CAddressISM330,CTRL9_XL,B11100001);
 delay(50);
 #endif
 
- 
 }
 
 void resetAccelGyro()
@@ -224,7 +223,7 @@ String axisMapArray[24][5]={
 String axisMapArray[24][5]={ 
                   //{portsOrientation,boxtopOrientation,verticalGloadAxis,lateralGloadAxis,forwardGloadAxis}
                   // X and Y axes are swapped on this chip
-                  {"FORWARD","LEFT","X","Z","Y"},
+                  {"FORWARD","LEFT","X","-Z","Y"}, // Paul's , fixed (used to be +Z)
                   {"FORWARD","RIGHT","-X","Z","Y"},
                   {"FORWARD","UP","Z","X","Y"}, // Vac's RV-4
                   {"FORWARD","DOWN","-Z","-X","Y"},
@@ -336,7 +335,13 @@ Gx=getGyroForAxis(rollGyroAxis); // roll rate (in deg/sec)
 Gy=getGyroForAxis(pitchGyroAxis); // pitch rate
 Gz=getGyroForAxis(yawGyroAxis); // yaw rate
 
+
+// static pressure read. We read it here, need high speed static pressure for KalmanVSI
+Pstatic=GetStaticPressure();
+Palt=145366.45*(1-pow((Pstatic+pStaticBias)/1013.25,0.190284)); //Pstatic in milliBars,Palt in feet
+
 //Serial.printf("%.3f,%.3f,%.3f,%.2f,%.1f\n",Gx,Gy,Gz,imuTemp,imuTempRate);
+//Serial.printf("%.3f,%.3f,%.3f\n",Ax,Ay,Az);
 
 #ifdef LOGDATA_IMU_RATE
 logData();

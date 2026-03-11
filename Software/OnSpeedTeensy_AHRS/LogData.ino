@@ -6,10 +6,14 @@ int charsAdded=0;
 int boomAge=0;
 int efisAge=0;
 if (sdLogging)
-        {
+        {          
           charsAdded+=sprintf(logLine, "%lu,%i,%.2f,%i,%.2f,%.2f,%.2f,%.2f,%.2f,%i,%i",timeStamp,Pfwd,PfwdSmoothed,P45,P45Smoothed,Pstatic,Palt,IAS,AOA,flapsPos,dataMark);
           //charsAdded+=sprintf(logLine, "%lu,%i,%.2f,%i,%.2f,%.2f,%.2f,%.2f,%.2f,%i,%i",timeStamp,124,124.56,145,145.00,1013.00,5600.00,110.58,10.25,2,0);
-          charsAdded+= sprintf(logLine+charsAdded, ",%.2f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.2f,%.2f",imuTemp,Az,Ay,Ax,Gx,Gy,Gz,smoothedPitch,smoothedRoll);
+          #ifdef OAT_AVAILABLE
+           charsAdded+=sprintf(logLine+charsAdded, ",%.2f,%.2f",OAT,TAS*MPS2KTS);
+          #endif
+          
+          charsAdded+= sprintf(logLine+charsAdded, ",%.2f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.2f,%.2f",imuTemp,Az,Ay,Ax,Gx,-Gy,Gz,smoothedPitch,smoothedRoll); // saving negative pitcharate to confirm to Vectrornav notation
           if (readBoom)
             { 
             boomAge=millis()-boomTimestamp;            
@@ -54,13 +58,16 @@ void createLogFile()
         while (Sd.exists(filenameSensor))
               {
               fileCount++;  
-              sprintf(filenameSensor,"log_%d.csv",fileCount);              
+              snprintf(filenameSensor, sizeof(filenameSensor), "log_%d.csv", fileCount);   
               }
         Serial.print("Sensor log file:"); Serial.println(filenameSensor);        
 
             SensorFile = Sd.open(filenameSensor, O_CREAT | O_WRITE | O_TRUNC);
             if (SensorFile) {
                             SensorFile.print("timeStamp,Pfwd,PfwdSmoothed,P45,P45Smoothed,PStatic,Palt,IAS,AngleofAttack,flapsPos,DataMark");
+                            #ifdef OAT_AVAILABLE
+                            SensorFile.print(",OAT,TAS");
+                            #endif
                             SensorFile.print(",imuTemp,VerticalG,LateralG,ForwardG,RollRate,PitchRate,YawRate,Pitch,Roll");
                             if (readBoom) SensorFile.print(",boomStatic,boomDynamic,boomAlpha,boomBeta,boomIAS,boomAge");       
                             if (readEfisData)

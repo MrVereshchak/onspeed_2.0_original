@@ -1,5 +1,9 @@
 // to be compiled on Arduino 1.8.16 and ESP32 Pico Kit board file v1.0.6 (2.0 slows down HTTP transfer, log file downloads are painfully slow)
 
+// Mac Monterey python issue fix ("exec: "python": executable file not found in $PATH")
+// sed -i -e 's/=python /=python3 /g' ~/Library/Arduino15/packages/esp32/hardware/esp32/*/platform.txt
+
+
 ////////////////////////////////////////////////////
 // More details at
 //      http://www.flyOnSpeed.org
@@ -15,6 +19,7 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <WebSocketsServer.h> // https://github.com/Links2004/arduinoWebSockets version 2.1.3
+#include <DNSServer.h>
 //#include <StreamString.h>
 #include "html_header.h"
 #include "html_liveview.h"
@@ -24,12 +29,13 @@
 #include "css_chartist.h"
 #include "javascript_chartist1.h"
 #include "javascript_chartist2.h"
+#include "javascript_domvas.h"
 #include "javascript_regression.h"
 
 
 #define BAUDRATE_WIFI         1000000
 
-String wifi_fw="3.2.3g"; // wifi firmware version
+String wifi_fw="3.3.7"; // wifi firmware version
 
 const char* ssid = "OnSpeed";
 const char* password = "angleofattack";
@@ -60,6 +66,7 @@ typedef struct
 String pageHeader;
 String pageFooter="</body></html>";
 String uploadConfigString;
+DNSServer dnsServer;
 WebServer server(80);
 
 // initialize config variables
@@ -600,10 +607,11 @@ void handleCalWizard()
             String ScssChartist=String(cssChartist);
             String SjsChartist1=String(jsChartist1);
             String SjsChartist2=String(jsChartist2);
+            String SjsDomvas=String(jsDomvas);
             String SjsCalibration=String(jsCalibration);
             String ShtmlCalibration=String(htmlCalibration);
                    
-            int contentLength=page.length()+SjsSGfilter.length()+SjsRegression.length()+ScssChartist.length()+SjsChartist1.length()+SjsChartist2.length()+SjsCalibration.length()+ShtmlCalibration.length()+pageFooter.length();
+            int contentLength=page.length()+SjsSGfilter.length()+SjsRegression.length()+ScssChartist.length()+SjsChartist1.length()+SjsChartist2.length()+SjsDomvas.length()+SjsCalibration.length()+ShtmlCalibration.length()+pageFooter.length();
             //server.sendHeader("Content-Length", (String)contentLength);
             server.setContentLength(CONTENT_LENGTH_UNKNOWN); // send content in chuncks, too large for String
             server.send(200, "text/html", "");
@@ -613,6 +621,7 @@ void handleCalWizard()
             server.sendContent(ScssChartist);
             server.sendContent(SjsChartist1);
             server.sendContent(SjsChartist2);
+            server.sendContent(SjsDomvas);
             server.sendContent(SjsCalibration);
             server.sendContent(ShtmlCalibration);
             server.sendContent(pageFooter);
@@ -2082,8 +2091,8 @@ Serial.setDebugOutput(true);
     
   //called when the url is not defined here
   server.onNotFound([]() {
-     if (!handleFileRead(server.uri())) 
-      server.send(404, "text/plain", "FileNotFound");
+                         if (!handleFileRead(server.uri())) 
+                          server.send(404, "text/plain", "FileNotFound");
       });
   
   // start server
@@ -2092,6 +2101,7 @@ Serial.setDebugOutput(true);
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
   if (MDNS.begin("onspeed")) MDNS.addService("http", "tcp", 80);  
+  dnsServer.start(53, "onspeed.local",  Ip);
   WiFi.setTxPower(WIFI_POWER_2dBm);
 } // setup
 
@@ -2140,6 +2150,7 @@ String getTeensyVersion()
 void loop() {
   server.handleClient();
   webSocket.loop();
+  dnsServer.processNextRequest();
 // parse live data from the Teensy via Serial
 unsigned long bytesAvailable;
 int readCounter=0;

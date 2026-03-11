@@ -1,4 +1,9 @@
 // to be compiled on Arduino 1.8.16 & Teensyduino 1.55
+//*** IMPORTANT ***
+//For best performance compile with Tool > Optimize > Fastest with LTO. Gives 1.6x performance gain vs default setting
+
+// Mac Ventura And Arduino 2.0 ready. Use this Teensyduino for Mac:
+//https://www.pjrc.com/teensy/td_158/Teensyduino_MacOS_Catalina.zip
 
 ////////////////////////////////////////////////////
 // More details at
@@ -6,15 +11,30 @@
 //      and
 //      https://github.com/flyonspeed/OnSpeed-Gen2/
 
-
-#define VERSION "3.2.3.g" //Bob's MGL parser fix.
+#define VERSION "3.3.7g" // 10/5/23 Corrected Forward/Left orientation IMU axis defintion
+// "3.3.7f" // 7/22/23 separated serial display smoothing to Lateral & Vertical G.
+//"3.3.7e" // 7/16/2023 fixed log replay so it works with different log formats
+//"3.3.7d" // 7/08/2023 fixed lateral/vertical G issue. Fixed panel control button not working. Some attempt to fix reboot on config load/save
+//"3.3.7c" // 7/03/2023 fixed AHRS issue (had a TAS double unit conversion), fixed wifi stray dot issue
+// "3.3.7b" // 7/01/2023 optimized AHRS and iVSI parameters for better performance during AOA calibration. Also optimized boom and VN-300 data parsers
+// "3.3.7a" // 4/15/2023 optimized AHRS parameters for better pitch performance during AOA calibration
+//"3.3.7" // fixed dumb mistake of using TAS in kts instead of m/sec in the AHRS airspeed correction when OAT enabled.
+//"3.3.6" // added capability to save screenshots of calibration results on the Wifi interface, and confirm before saving calibration to settings. (wifi code also updated)
+          // Wifi code is compiled, just upload OnSpeedWifi.ino.pico32.bin filen to upgrade to 3.3.6
+//"3.3.5" // fixed error in adaptive smoothing.
+//"3.3.4" //fixed reboot on config load/save, and added HIGHRES_ANALOGREAD to have better resolution when reading volume and flap potentiometers.
+//"3.3.3"  // 3/1/2023 Adaptive pitch filtering for smoother internal AHRS derived pitch angles, useful for IMU based calibration.
+//"3.3.2" // 1/29/2023 Fixed TAS formula, and added TAS to the log file.
+//"3.3.1" // 1/28/2023  Added functionality to read digital OAT sensor DS18B20 on Pin 9. To enable uncomment the #define OAT_AVAILABLE line. Needs two new libraries: OneWire.h  and DallasTemperature.h
+//"3.3.0" //12/4/2022 fixed KalmanVSI (reading Pstatic at 208Hz together with IMU). Added calibration data source to Wifi display. Requires wifi firmware upgrade!
+//"3.2.3.g3" //Bob's MGL parser fix and optimization
 //"3.2.3f" // 7/17/2022 Fixed VSI unit conversion issue and Roll calibration direction.
 //"3.2.3e" //7/15/2021 Covid-affected update, proceed with caution. Added checksums to data download. Also change comm speeds to 1,000,000bps
 //"3.2.3d" // 7/14/2022 tuned kalmanVSI filter
 //"3.2.3c" // 7/12/2022 another switch glitch fix
 //"3.2.3b" //mgl updates. VSI.
 //"3.2.3a" //interrupt based push button, updated OneButton library
-//"3.2.3" // modified and tuned AHRS and iVSI code for the new IMS330 IMU, do not use this code with the old IMS9DS1 IMU, more responsive Datamark button
+//"3.2.3" // modified and tuned AHRS and iVSI code for the new ISM330 IMU, do not use this code with the old IMS9DS1 IMU, more responsive Datamark button
 //"3.2.2r"  6/2/2022//MGL efis input
 //"3.2.2q" //disabled IMU gyro LPF1 filter, really disabled high pass filter this time...
 //"v3.2.2p" // 6/2/2022 disabled IMU gyro hardware high pass filter
@@ -70,6 +90,20 @@
 //IMU 128
 //Sensors 128
 
+
+// debug config. Comment out any of them to disable serial debug output.
+//#define SENSORDEBUG // show sensor debug
+//#define EFISDATADEBUG // show efis data debug
+//#define BOOMDATADEBUG  // show boom data debug
+//#define TONEDEBUG // show tone related debug info
+//#define SDCARDDEBUG  // show SD writing debug info
+//#define VOLUMEDEBUG  // show audio volume info
+//#define VNDEBUG // show VN-300 debug info
+//#define AXISDEBUG //show accelerometer axis configuration
+//#define IMUTEMPDEBUG
+//#define AGEDEBUG // debug data age (boom,efis [ms])
+
+
                          
 #define DEFAULT_CONFIG  default_config
 
@@ -95,15 +129,16 @@
 #define GLIMIT_REPEAT_TIMEOUT   3000 // milliseconds to repeat G limit.
 #define ASYMMETRIC_GYRO_LIMIT   15 // degrees/sec rotation on either axis to trigger asymmetric G limits.
 
-
-
 // coefficient of pressure formula
 #ifdef SPHERICAL_PROBE
-  #define PCOEFF(p_fwd,p_45)    atan2(p_45,p_fwd); //spherical CP3
-  #define IASCURVE(x)           -3.206e-05*x*x*x+0.008454*x*x+0.3492*x+27.73; // Zlin IAS curve
+  #define PCOEFF(p_fwd,p_45)    p_45/p_fwd; //spherical CP3
+  #define IASCURVE(x)           x // Zlin IAS curve
 #else
   #define PCOEFF(p_fwd,p_45)  p_45/p_fwd; // CP3 // ratiometric CP. CP1 & CP2 are not ratiometric. Can't divide with P45, it goes through zero on Dynon probe.
 #endif
+
+// OAT sensor available
+//#define OAT_AVAILABLE  // DS18B20 sensor on pin 9
 
 // boom curves
 //#define BOOM_ALPHA_CALC(x)      7.0918*pow(10,-13)*x*x*x*x - 1.1698*pow(10,-8)*x*x*x + 7.0109*pow(10,-5)*x*x - 0.21624*x + 310.21; //degrees
@@ -122,25 +157,20 @@
 #define BOOM_PACKET_SIZE  50
 #define EFIS_PACKET_SIZE 512
 
-
-// debug config. Comment out any of them to disable serial debug output.
-//#define SENSORDEBUG // show sensor debug
-//#define EFISDATADEBUG // show efis data debug
-//define BOOMDATADEBUG  // show boom data debug
-//#define TONEDEBUG // show tone related debug info
-//#define SDCARDDEBUG  // show SD writing debug info
-//#define VOLUMEDEBUG  // show audio volume info
-//#define VNDEBUG // show VN-300 debug info
-//#define AXISDEBUG //show accelerometer axis configuration
-//#define IMUTEMPDEBUG
-//#define AGEDEBUG // debug data age (boom,efis [ms])
+//analog resolution (use 13 bit analog resolution, default is 10-bit)
+//#define HIGHRES_ANALOGREAD
 
 // box functionality config
 //String dataSource = "TESTPOT"; // potentiometer wiper on Pin 10 of DSUB 15 connector
 //String dataSource = "RANGESWEEP";
 String dataSource = "SENSORS";
 //String dataSource = "REPLAYLOGFILE";
-String replayLogFileName=""; 
+String replayLogFileName="";
+
+// config strings
+String configString="";
+String checksumString="";                                                                                                                                         
+String configContent="";
 
 // type definitions
 typedef struct  {
@@ -204,6 +234,7 @@ unsigned long lastSDWrite=millis();
 unsigned long lastLedUpdate=millis();
 unsigned long lastImuTempUpdate=millis();
 unsigned long lastDecelUpdate=millis();
+unsigned long lastOATUpdate=millis();
 
 volatile unsigned long lastWatchdogRefresh;
 volatile bool watchdogEnabled=false;
@@ -223,16 +254,49 @@ float calculatedGLimitNegative;
 int aoaSmoothing=20;  // AOA smoothing window (number of samples to lag)
 int pressureSmoothing=15; // median filter window for pressure smoothing/despiking
 
-const int accSmoothing=176; // accelerometer smoothing, Simple moving average
+const float accSmoothing=0.060899; // accelerometer smoothing, exponential
 const int imuTempSmoothing=20; // imu temperature smoothing, Simple moving average, 10 = 1 second
-//const int imuTempRateSmoothing=5; // imu temperature smoothing, Simple moving average
 const int gyroSmoothing=30; // gyro smoothing, Simple moving average
-const int compSmoothing=20; // acceleration compensation smoothing (linear and centripetal)
-const int iasSmoothing=136; // airspeed smoothing, 314 sample moving average for 208hz [optimized for ISM330 IMU]
-const int tasSmoothing=10; //[optimized for ISM330 IMU]
-const int ahrsSmoothing=50; // ahrs smoothing, Exponential
-const int serialDisplaySmoothing=10; // smoothing serial display data (LateralG, verticalG)  10hz data.
-const float gyroScaleCorrection=1.14; // [optimized for ISM330 IMU]
+const float iasSmoothing=0.0179; // airspeed smoothing, exponential [optimized for ISM330 IMU]
+const int serialDisplaySmoothingLat=50; // smoothing serial display data (LateralG)  10hz data.
+const int serialDisplaySmoothingVert=20; // smoothing serial display data (VertG)  10hz data.
+
+// ahrs variables
+
+const float Kelvin=273.15;
+const float Temp_rate=0.00198119993;
+volatile float ISA_temp_k;
+volatile float OAT_k;
+volatile float DA;
+volatile float TASdiff;
+volatile float installPitchRad;
+volatile float installRollRad;
+volatile float installYawRad;
+volatile float rollRateCorr;
+volatile float pitchRateCorr;
+volatile float yawRateCorr;
+volatile float aVertCorr;
+volatile float aFwdCorr;
+volatile float aLatCorr;
+volatile float aFwdCp;
+volatile float aLatCp;
+volatile float aVertCp;
+float q[4];
+
+// wifi data variables
+char crc_buffer[250];
+volatile byte CRC=0;
+volatile float wifiAOA;
+volatile float alphaVA=0.00;
+volatile float wifiPitch=0;
+volatile float wifiRoll=0;
+volatile float wifiFlightpath=0;
+volatile float wifiVSI=0;
+volatile float wifiIAS=0;
+volatile int calSourceID;
+volatile float accelSumSq;
+volatile float verticalGload;
+ 
 
 intArray flapDegrees;
 intArray flapPotPositions;
@@ -297,7 +361,6 @@ float imuSampleRate=208; // 208Hz.
 
 volatile bool sendWifiData=false;
 int displayDataCounter=0;
-int imuIndex=0; // used for logreplay
 
 
 // data mark
@@ -317,7 +380,7 @@ volatile double coeffP; // coefficient of pressure
 #define SENSOR_INTERVAL 20000  // microsecond interval for sensor read (50hz)
 //#define SENSOR_INTERVAL 4201 // 238hz logging
 //#define REPLAY_INTERVAL 4201.680672268907563
-#define REPLAY_INTERVAL 20000
+#define REPLAY_INTERVAL 20000 // 20000 for 50hz, 4808 for 208hz
 #ifdef IMUTYPE_LSM9DS1
 #define IMU_INTERVAL    4200 // microseconds interval for IMU read
 #endif
@@ -361,7 +424,7 @@ volatile double coeffP; // coefficient of pressure
 #define PIN_LED1              13    // internal LED for showing serial input state.
 #define PIN_LED2              5    // external LED for showing AOA status (audio on/off)
 #define FLAP_PIN              A2     // flap position switch  (pin 7 on DB15)
-#define OAT_PIN               A14    // OAT analog input pin
+#define OAT_PIN               33    // OAT analog input pin
 #define SWITCH_PIN            2
 #define PULSE_TONE            1
 #define SOLID_TONE            2
@@ -444,6 +507,9 @@ volatile double coeffP; // coefficient of pressure
 #define FT2M    0.3048 // feet to meters
 #define M2FT    3.28084 // meters to feet
 #define MPS2FPM 196.85 // m/sec to fpm
+#define MPS2KTS 1.94384 // m/sec to fpm
+#define KTS2MPS 0.514444 // m/sec to fpm
+
 
 #define I2C_COMMUNICATION_TIMEOUT 2000  // microseconds
 
@@ -482,6 +548,16 @@ uint8_t  sectorBuffer[512];
 #include "MadgwickFusion.h"
 #include "KalmanFilter.h"
 #include <SavLayFilter.h>
+
+#ifdef OAT_AVAILABLE
+  // set up the digital temperature sensor
+  #include <OneWire.h> //https://github.com/PaulStoffregen/OneWire
+  #include <DallasTemperature.h> //https://github.com/milesburton/Arduino-Temperature-Control-Library
+  #define ONE_WIRE_BUS 33
+  OneWire oneWire(ONE_WIRE_BUS);
+  DallasTemperature oatSensor(&oneWire);
+#endif
+
 
 Madgwick filter;
 KalmanFilter kalman;
@@ -543,6 +619,7 @@ String calSource="";
 bool efisPacketInProgress=false;
 unsigned long lastReceivedEfisTime;
 int efis_bufferIndex=0;
+String vnFracSec="";
 String efisBufferString="";
 
 char efis_inChar;               // efis serial character
@@ -584,6 +661,7 @@ volatile double vnGnssLon=0.00L;
 String vnTimeUTC="";
 byte vnBuffer[127];
 byte vnBufferIndex=0;
+int mglMsgLen=0;
 
 // pressure variables
 volatile int Pfwd;
@@ -603,6 +681,9 @@ volatile float boomAlpha=0.0;
 volatile float boomBeta=0.0;
 volatile float boomIAS=0.0;
 volatile unsigned long boomTimestamp=millis();
+#define BOOM_BUFFER_SIZE 100
+char boomBuffer[BOOM_BUFFER_SIZE];
+int boomBufferLength = 0;
 
 char parseBuffer[10];
 int parseBufferSize=0;
@@ -641,31 +722,24 @@ volatile float maneuveringAOA=0.00;
 volatile float percentLift=0.0;                     // normalized angle of attack, or lift %
 volatile float IAS = 0.0;                          // live Air Speed Indicated
 volatile float smoothedIAS=0.0;                    // smoothed airspeed
-volatile float smoothedIASdiff=0.0;                    // smoothed airspeed
-volatile float smoothedTAS=0.0;                    // smoothed airspeed
-volatile float prevIAS=0.0;                        // previous IAS sample (used to calculate acceleartion)
+volatile float TASdiffSmoothed=0.0;                // smoothed true airspeed differential
+volatile float TAS=0.0;                            // smoothed true airspeed
+volatile float prevTAS=0.0;                        // previous TAS sample (used to calculate acceleration)
 volatile float Palt=0.00;                          // pressure altitude
+volatile float OAT=0.00;
 
 float currentRangeSweepValue=RANGESWEEP_LOW_AOA;
 RunningMedian P45Median(pressureSmoothing);
 RunningMedian PfwdMedian(pressureSmoothing);
-RunningMedian BaroMedianMillibars(pressureSmoothing);
+//RunningMedian BaroMedianMillibars(pressureSmoothing);
 RunningAverage PfwdAvg(10);
 RunningAverage P45Avg(10);
-RunningAverage IASdiffAvg(iasSmoothing);
-RunningAverage TASAvg(tasSmoothing);
 //RunningAverage aVertAvg(accSmoothing);
 //RunningAverage aLatAvg(accSmoothing);
 //RunningAverage aFwdAvg(accSmoothing);
 RunningAverage GxAvg(gyroSmoothing);
 RunningAverage GyAvg(gyroSmoothing);
 RunningAverage GzAvg(gyroSmoothing);
-//RunningAverage aVertCompAvg(compSmoothing);
-//RunningAverage aLatCompAvg(compSmoothing);
-//RunningAverage aFwdCompAvg(compSmoothing);
-RunningAverage aVertCorrAvg(accSmoothing);
-RunningAverage aLatCorrAvg(accSmoothing);
-RunningAverage aFwdCorrAvg(accSmoothing);
 RunningAverage imuTempAvg(imuTempSmoothing);
 //RunningAverage imuTempRateAvg(imuTempRateSmoothing);
 
@@ -707,7 +781,7 @@ volatile static unsigned int datalogBytesAvailable=0;
 // IMU variables
 
 volatile float ax, ay, az; // ax -instantaneous
-volatile float aVert, aLat, aFwd, aVertComp, aLatComp, aFwdComp;
+volatile float aVertComp, aLatComp, aFwdComp;
 volatile float gx, gy, gz; // gx - instantaneous
 volatile float imuTemp;
 //volatile float imuTempRate;
@@ -723,6 +797,29 @@ volatile float accRoll=0.0; // smoothed pitch
 volatile float gyroPitch=0.0; // for debug
 volatile float gyroRoll=0.0; // for debug
 volatile float rawPitch=0.0; // raw pitch
+volatile float aFwdSmoothed=0.00; // smoothed corrected forward acceleration
+volatile float aLatSmoothed=0.00; // smoothed corrected lateral acceleration
+volatile float aVertSmoothed=1.00; // smoothed corrected vertical acceleration
+
+// 
+//replay variables
+int totalColumns=0;
+int idxPfwdSmoothed=0;
+int idxP45Smoothed=0;
+int idxflapsPos=0;
+int idxPalt=0;
+int idxIAS=0;
+int idxdataMark=0;
+int idxkalmanVSI=0;
+int idxAz=0;
+int idxAy=0;
+int idxAx=0;
+int idxGx=0;
+int idxGy=0;
+int idxGz=0;
+int idxsmoothedPitch=0;
+int idxsmoothedRoll=0;
+int idxflightPath=0;
 
 
 //uint8_t Ascale = 0;     // accel = +/-2G scale
@@ -775,6 +872,10 @@ void readAccelGyro(bool tempUpdate);
 
 void setup() {
 delay(100);
+#ifdef HIGHRES_ANALOGREAD
+analogReadResolution(13);
+#endif
+
 attachInterrupt(SWITCH_PIN,switchCheck,CHANGE); // switch interrupt
 initI2C(); // initialize i2c ports
 initAccelGyro(); //initialize accelerometer & Gyro (IMU)  
@@ -825,6 +926,12 @@ if (!volumeControl)
   Palt=145366.45*(1-pow((Pstatic+pStaticBias)/1013.25,0.190284)); //Pstatic in milliBars,Palt in feet
   // initialize pitch and roll
   readAccelGyro(true);
+
+  // initialize smoothed accelerometers
+  aFwdSmoothed=getAccelForAxis(forwardGloadAxis);
+  aLatSmoothed=getAccelForAxis(lateralGloadAxis);
+  aVertSmoothed=getAccelForAxis(verticalGloadAxis);
+  
   smoothedPitch=calcPitch(getAccelForAxis(forwardGloadAxis),getAccelForAxis(lateralGloadAxis), getAccelForAxis(verticalGloadAxis))+pitchBias;
   smoothedRoll=calcRoll(getAccelForAxis(forwardGloadAxis),getAccelForAxis(lateralGloadAxis), getAccelForAxis(verticalGloadAxis))+rollBias;    
   pinMode(TONE_PIN, OUTPUT);
@@ -834,6 +941,14 @@ if (!volumeControl)
   pinMode(TESTPOT_PIN, INPUT);
   //pinMode(SWITCH_PIN, INPUT_PULLUP);
 
+#ifdef OAT_AVAILABLE
+// start the OAT sensor
+  pinMode(33,INPUT_PULLUP);  
+  oatSensor.begin();
+  oatSensor.setWaitForConversion(false);
+  oatSensor.requestTemperatures(); 
+#endif
+  
   Switch.setPressTicks(1000); // long press time
   Switch.attachClick(SwitchSingleClick);
   Switch.attachLongPressStart(SwitchLongPress);
@@ -868,7 +983,7 @@ if (!volumeControl)
  filter.begin(imuSampleRate,-smoothedPitch,smoothedRoll); // start Madgwick filter at 238Hz for LSM9DS1 and 208Hz for ISM330DHXC
 
  // kalman altitude filter
- kalman.Configure(7.243, 15.8993, 5.6296e-09, Palt * FT2M,0.00,0.00); // configure the Kalman filter (Smooth altitude and IVSI from Baro + accelerometers)
+ kalman.Configure(0.79078, 26.0638, 1e-11, Palt * FT2M,0.00,0.00); // configure the Kalman filter (Smooth altitude and IVSI from Baro + accelerometers)
  // optimized values: 33.9534. 25.004, 0.13843
  
  // set interrupt priorities
@@ -905,6 +1020,7 @@ if (!volumeControl)
  }
 
 // main loop
+
 
 void loop() {
 
@@ -962,15 +1078,14 @@ if ( overgWarning && millis()-gLimitLastUpdate>=100)
 if (millis()-lastDecelUpdate>100)
     {
 #ifdef SPHERICAL_PROBE
-iasDerivativeInput=efisIAS;    
+    iasDerivativeInput=efisIAS;
 #else
-    iasDerivativeInput=IAS;
+        iasDerivativeInput=IAS;
 #endif  
     DecelRate=-iasDerivative.Compute();
     DecelRate=DecelRate*10;
     lastDecelUpdate=millis(); 
     }
-      
 // wifi data
 if (sendWifiData && millis()-wifiDataLastUpdate>98) // update every 100ms (10Hz) (89ms to avoid processing delays)
     {
@@ -984,6 +1099,16 @@ if (millis()-lastLedUpdate>300)
       heartBeat();
       lastLedUpdate=millis(); 
       }
+
+#ifdef OAT_AVAILABLE
+ // oat read
+ if (millis()-lastOATUpdate>=1000)
+      {
+      OAT=oatSensor.getTempCByIndex(0);
+      oatSensor.requestTemperatures();      
+      lastOATUpdate=millis();
+      }
+#endif      
 
 switchCheck(); // check main switch
       
